@@ -14,7 +14,7 @@ export default function Footer() {
         <Link href="/terms">Terms</Link>
       </nav>
       <div className="footer-meta">
-        <a href="mailto:support@skillduck.com">support@skillduck.com</a>
+        <a href="mailto:support@skillduck.site">support@skillduck.site</a>
         <span>© 2026 SkillDuck</span>
       </div>
     </footer>

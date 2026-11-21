@@ -38,7 +38,7 @@ export default function TermsPage() {
         <p>We may update these terms from time to time to reflect new features, legal requirements, or operational improvements. Continued use of the platform after updates indicates acceptance of the revised terms.</p>
 
         <h2>10. Contact</h2>
-        <p>Questions about these terms should be sent to <a href="mailto:support@skillduck.com">support@skillduck.com</a>.</p>
+        <p>Questions about these terms should be sent to <a href="mailto:support@skillduck.site">support@skillduck.site</a>.</p>
       </article>
     </main>
   );

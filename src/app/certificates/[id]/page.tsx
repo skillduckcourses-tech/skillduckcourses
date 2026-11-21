@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import CertificateCard from "../certificate-card";
 import { prisma } from "@/src/lib/prisma";
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://www.skillduck.com";
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://skillduckcourses.site";
 
 async function findCertificate(identifier: string) {
   const numericId = Number(identifier);

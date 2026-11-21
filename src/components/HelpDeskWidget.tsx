@@ -24,33 +24,63 @@ export default function HelpDeskWidget() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const refreshControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    setTicketId(window.localStorage.getItem("skillduck_help_ticket") || "");
-    setName(window.localStorage.getItem("skillduck_help_name") || "");
-    setEmail(window.localStorage.getItem("skillduck_help_email") || "");
+    const initialLoad = window.setTimeout(() => {
+      try {
+        setTicketId(window.localStorage.getItem("skillduck_help_ticket") || "");
+        setName(window.localStorage.getItem("skillduck_help_name") || "");
+        setEmail(window.localStorage.getItem("skillduck_help_email") || "");
+      } catch (storageError) {
+        console.warn("Help-desk preferences could not be loaded from browser storage.", storageError);
+        setError("Browser storage is unavailable. You can still send a message, but this conversation may not be saved on this device.");
+      }
+    }, 0);
+    return () => window.clearTimeout(initialLoad);
   }, []);
 
   const refresh = useCallback(async () => {
     if (!ticketId) return;
+    refreshControllerRef.current?.abort();
+    const controller = new AbortController();
+    refreshControllerRef.current = controller;
     try {
       const query = new URLSearchParams({ ticketId });
       if (email) query.set("email", email);
-      const response = await fetch(`/api/support/chat?${query}`, { cache: "no-store" });
+      const response = await fetch(`/api/support/chat?${query}`, { cache: "no-store", signal: controller.signal });
       const body = await jsonResponse<{ ticket?: ChatTicket; error?: string }>(response);
+      if (controller.signal.aborted) return;
+      if (response.status === 404) {
+        setTicketId("");
+        setTicket(null);
+        try {
+          window.localStorage.removeItem("skillduck_help_ticket");
+        } catch (storageError) {
+          console.warn("The unavailable help-desk ticket could not be cleared from browser storage.", storageError);
+        }
+        setError("This saved conversation is no longer available. Send a message to start a new one.");
+        return;
+      }
       if (!response.ok) throw new Error(body.error || "Unable to refresh your conversation.");
-      if (body.ticket) setTicket(body.ticket);
+      if (!body.ticket) throw new Error("The support service returned no conversation.");
+      setTicket(body.ticket);
       setError("");
     } catch (loadError) {
+      if (controller.signal.aborted) return;
       setError(loadError instanceof Error ? loadError.message : "Unable to refresh your conversation.");
     }
   }, [ticketId, email]);
 
   useEffect(() => {
     if (!open || !ticketId) return;
-    void refresh();
+    const initialRefresh = window.setTimeout(() => void refresh(), 0);
     const interval = window.setInterval(() => void refresh(), 3500);
-    return () => window.clearInterval(interval);
+    return () => {
+      window.clearTimeout(initialRefresh);
+      window.clearInterval(interval);
+      refreshControllerRef.current?.abort();
+    };
   }, [open, ticketId, refresh]);
 
   useEffect(() => {
@@ -63,24 +93,45 @@ export default function HelpDeskWidget() {
     if (!content || busy) return;
     setBusy(true);
     setError("");
+    refreshControllerRef.current?.abort();
     try {
       const response = await fetch("/api/support/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ticketId: ticketId || undefined, message: content, name: name || undefined, email: email || undefined }),
       });
-      const body = await jsonResponse<{ ticketId?: string; messages?: Message[]; isAiHandled?: boolean; escalated?: boolean; error?: string }>(response);
-      if (!response.ok || !body.ticketId) throw new Error(body.error || "Unable to send your message.");
-      setTicketId(body.ticketId);
-      window.localStorage.setItem("skillduck_help_ticket", body.ticketId);
-      if (name) window.localStorage.setItem("skillduck_help_name", name);
-      if (email) window.localStorage.setItem("skillduck_help_email", email);
+      const body = await jsonResponse<{ ticketId?: string; messages?: Message[]; isAiHandled?: boolean; escalated?: boolean; warning?: string; error?: string }>(response);
+      if (response.status === 404 && ticketId) {
+        setTicketId("");
+        setTicket(null);
+        try {
+          window.localStorage.removeItem("skillduck_help_ticket");
+        } catch (storageError) {
+          console.warn("The unavailable help-desk ticket could not be cleared from browser storage.", storageError);
+        }
+        throw new Error("This saved conversation is no longer available. Send your message again to start a new one.");
+      }
+      const responseTicketId = body.ticketId;
+      if (!response.ok || !responseTicketId) throw new Error(body.error || "Unable to send your message.");
+      const receivedMessages = body.messages;
+      if (!Array.isArray(receivedMessages)) throw new Error("The support service did not return the saved messages.");
+      setTicketId(responseTicketId);
+      try {
+        window.localStorage.setItem("skillduck_help_ticket", responseTicketId);
+        if (name) window.localStorage.setItem("skillduck_help_name", name);
+        if (email) window.localStorage.setItem("skillduck_help_email", email);
+      } catch (storageError) {
+        console.warn("The support conversation could not be saved to browser storage.", storageError);
+      }
       setTicket((current) => ({
-        id: body.ticketId!,
+        id: responseTicketId,
         status: "OPEN",
         isAiHandled: body.isAiHandled ?? current?.isAiHandled ?? true,
-        messages: body.messages || current?.messages || [],
+        messages: body.warning
+          ? [...(current?.messages || []), ...receivedMessages.filter((message) => !current?.messages.some((existing) => existing.id === message.id))]
+          : receivedMessages,
       }));
+      setError(body.warning || "");
       setDraft("");
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : "Unable to send your message.");

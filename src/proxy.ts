@@ -10,7 +10,11 @@ export async function proxy(request: NextRequest) {
   const adminPage = pathname === "/admin" || pathname.startsWith("/admin/");
   const adminApi = pathname.startsWith("/api/admin/");
   if (adminPage && !session?.isAdmin) {
-    return NextResponse.redirect(new URL("/", request.url));
+    const loginUrl = request.nextUrl.clone();
+    loginUrl.pathname = "/";
+    loginUrl.search = "";
+    loginUrl.searchParams.set("next", `${pathname}${request.nextUrl.search}`);
+    return NextResponse.redirect(loginUrl);
   }
   if (adminApi && !session?.isAdmin) {
     return NextResponse.json({ error: "Admin access required." }, { status: 403 });

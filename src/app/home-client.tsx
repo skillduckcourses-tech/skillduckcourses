@@ -35,25 +35,47 @@ export default function HomeClient() {
     event.preventDefault();
     setError("");
     setLoading(true);
-    const response = await fetch(signup ? "/api/auth/signup" : "/api/auth/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, password, name }),
-    });
-    if (response.ok) {
+    try {
+      const response = await fetch(signup ? "/api/auth/signup" : "/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password, name }),
+      });
+      const body = (await response.json().catch(() => null)) as {
+        error?: string;
+        user?: { isAdmin?: boolean };
+      } | null;
+      if (!response.ok) throw new Error(body?.error || "Unable to sign in.");
+
       if (signup) {
         setSignup(false);
         setPassword("");
         setError("Account created. Sign in with your new password.");
-        setLoading(false);
       } else {
-        router.push("/dashboard");
+        const requestedPath = new URLSearchParams(window.location.search).get("next");
+        let destination: string | null = null;
+        if (requestedPath) {
+          try {
+            const url = new URL(requestedPath, window.location.origin);
+            if (url.origin === window.location.origin) destination = `${url.pathname}${url.search}${url.hash}`;
+          } catch {
+            destination = null;
+          }
+        }
+
+        const isAdmin = body?.user?.isAdmin === true;
+        const requestingAdmin = destination === "/admin" || destination?.startsWith("/admin/") === true;
+        if (requestingAdmin && !isAdmin) {
+          setError("This account does not have administrator access.");
+          return;
+        }
+        router.replace(destination || (isAdmin ? "/admin" : "/dashboard"));
       }
-      return;
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : "Unable to sign in.");
+    } finally {
+      setLoading(false);
     }
-    const body = (await response.json()) as { error?: string };
-    setError(body.error || "Unable to sign in.");
-    setLoading(false);
   }
 
   return (

@@ -4,7 +4,7 @@ import { findCourse } from "@/src/lib/course-lookup";
 import { prisma } from "@/src/lib/prisma";
 import CourseView from "./course-view";
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://www.skillduck.com";
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://skillduckcourses.site";
 
 const courseFaqs = [
   {

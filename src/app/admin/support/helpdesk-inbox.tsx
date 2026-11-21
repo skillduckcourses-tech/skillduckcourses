@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Message = { id: string; sender: "USER" | "AI" | "ADMIN"; content: string; createdAt: string };
 type Ticket = { id: string; userId: string | null; userName: string; userEmail: string | null; subject: string; status: "OPEN" | "RESOLVED"; isAiHandled: boolean; createdAt: string; updatedAt: string; messages: Message[] };
@@ -17,17 +17,22 @@ export default function HelpDeskInbox() {
   const [reply, setReply] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const loadSequenceRef = useRef(0);
 
   const load = useCallback(async () => {
+    const sequence = ++loadSequenceRef.current;
     try {
       const response = await fetch("/api/admin/support/chat", { cache: "no-store" });
       const body = await readJson<{ tickets?: Ticket[]; error?: string }>(response);
       if (!response.ok) throw new Error(body.error || "Unable to load the help desk inbox.");
-      const items = body.tickets || [];
+      if (!Array.isArray(body.tickets)) throw new Error("The support service returned an invalid inbox.");
+      if (sequence !== loadSequenceRef.current) return;
+      const items = body.tickets;
       setTickets(items);
       setSelectedId((current) => current && items.some((ticket) => ticket.id === current) ? current : items[0]?.id || "");
       setError("");
     } catch (loadError) {
+      if (sequence !== loadSequenceRef.current) return;
       setError(loadError instanceof Error ? loadError.message : "Unable to load the help desk inbox.");
     }
   }, []);
@@ -45,8 +50,9 @@ export default function HelpDeskInbox() {
     setError("");
     try {
       const response = await fetch("/api/admin/support/chat", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
-      const body = await readJson<{ error?: string }>(response);
+      const body = await readJson<{ ticket?: Ticket; error?: string }>(response);
       if (!response.ok) throw new Error(body.error || "Unable to update this conversation.");
+      if (!body.ticket) throw new Error("The support service did not return the updated conversation.");
       if (payload.action === "reply") setReply("");
       await load();
     } catch (actionError) {

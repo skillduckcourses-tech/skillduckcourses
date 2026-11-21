@@ -31,7 +31,7 @@ export default function PrivacyPolicyPage() {
         <p>Depending on your location, you may have rights to access, correct, delete, or limit the processing of your personal data. You may also object to marketing or personalized ad practices where applicable. If you need help managing your personal data, please contact us using the details at the end of this policy.</p>
 
         <h2>7. Contact</h2>
-        <p>If you have concerns about privacy, cookies, or advertising, contact us at <a href="mailto:support@skillduck.com">support@skillduck.com</a>.</p>
+        <p>If you have concerns about privacy, cookies, or advertising, contact us at <a href="mailto:support@skillduck.site">support@skillduck.site</a>.</p>
       </article>
     </main>
   );

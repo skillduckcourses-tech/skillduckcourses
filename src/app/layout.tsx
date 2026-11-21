@@ -6,7 +6,7 @@ import WhatsAppSupport from "./whatsapp-support";
 import Navigation from "./navigation";
 import HelpDeskWidget from "@/src/components/HelpDeskWidget";
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://www.skillduck.com";
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://skillduckcourses.site";
 const adsenseClient = process.env.NEXT_PUBLIC_GOOGLE_ADSENSE_CLIENT || "";
 
 export const metadata: Metadata = {

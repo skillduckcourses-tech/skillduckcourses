@@ -2,9 +2,15 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { requireAdmin } from "@/src/lib/server-session";
 
+type HelpDeskAction = "reply" | "toggleAi" | "resolve" | "reopen";
+
+function isHelpDeskAction(action: unknown): action is HelpDeskAction {
+  return action === "reply" || action === "toggleAi" || action === "resolve" || action === "reopen";
+}
+
 export async function GET() {
-  if (!await requireAdmin()) return NextResponse.json({ error: "Admin access required." }, { status: 403 });
   try {
+    if (!await requireAdmin()) return NextResponse.json({ error: "Admin access required." }, { status: 403 });
     const tickets = await prisma.supportTicket.findMany({
       take: 100,
       orderBy: { updatedAt: "desc" },
@@ -18,16 +24,20 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  const admin = await requireAdmin();
-  if (!admin) return NextResponse.json({ error: "Admin access required." }, { status: 403 });
   try {
-    const body = await request.json().catch(() => ({})) as {
-      ticketId?: string;
-      action?: "reply" | "toggleAi" | "resolve" | "reopen";
-      message?: string;
-      isAiHandled?: boolean;
-    };
-    if (!body.ticketId || !body.action) return NextResponse.json({ error: "Ticket and action are required." }, { status: 400 });
+    if (!await requireAdmin()) return NextResponse.json({ error: "Admin access required." }, { status: 403 });
+    const body = await request.json().catch(() => null) as {
+      ticketId?: unknown;
+      action?: unknown;
+      message?: unknown;
+      isAiHandled?: unknown;
+    } | null;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "A JSON request body is required." }, { status: 400 });
+    }
+    if (typeof body.ticketId !== "string" || !body.ticketId || body.ticketId.length > 100 || !isHelpDeskAction(body.action)) {
+      return NextResponse.json({ error: "A valid ticket and action are required." }, { status: 400 });
+    }
     const ticket = await prisma.supportTicket.findUnique({ where: { id: body.ticketId }, select: { id: true } });
     if (!ticket) return NextResponse.json({ error: "Support ticket not found." }, { status: 404 });
 

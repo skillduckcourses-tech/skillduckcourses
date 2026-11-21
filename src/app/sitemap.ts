@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 import { prisma } from "@/src/lib/prisma";
 
-const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://www.skillduck.com").replace(/\/+$/, "");
+const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://skillduckcourses.site").replace(/\/+$/, "");
 
 export const revalidate = 3600;
 

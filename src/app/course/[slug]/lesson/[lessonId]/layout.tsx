@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 import { prisma } from "@/src/lib/prisma";
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://www.skillduck.com";
-
 type LessonParams = { slug: string; lessonId: string };
 
 async function getPublicLesson(params: LessonParams) {

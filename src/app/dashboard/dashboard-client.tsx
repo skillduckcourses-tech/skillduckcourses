@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import CertificateCard, { type CertificateView } from "@/src/app/certificates/certificate-card";
@@ -25,9 +25,12 @@ export default function DashboardClient() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [ticketError, setTicketError] = useState("");
+  const [ticketBusy, setTicketBusy] = useState(false);
   const [ticketOpen, setTicketOpen] = useState(false);
   const [ticketSubject, setTicketSubject] = useState("");
   const [ticketMessage, setTicketMessage] = useState("");
+  const ticketListSequenceRef = useRef(0);
   const [search, setSearch] = useState("");
   const [courseScope, setCourseScope] = useState<"all" | "enrolled">("all");
   const router = useRouter();
@@ -48,10 +51,21 @@ export default function DashboardClient() {
     const initialLoad = window.setTimeout(() => void loadDashboard(), 0);
     const refreshLoad = window.setInterval(() => void loadDashboard(), 15000);
     const ticketLoad = window.setTimeout(() => {
-      void fetch("/api/support/tickets")
-        .then(async (response) => response.ok ? await readJsonResponse<{ tickets?: Ticket[] }>(response) : null)
-        .then((body) => { if (body?.tickets) setTickets(body.tickets); })
-        .catch(() => undefined);
+      void (async () => {
+        const sequence = ++ticketListSequenceRef.current;
+        try {
+          const response = await fetch("/api/support/tickets", { cache: "no-store" });
+          const body = await readJsonResponse<{ tickets?: Ticket[]; error?: string }>(response);
+          if (!response.ok) throw new Error(body.error || "Unable to load your support tickets.");
+          if (!Array.isArray(body.tickets)) throw new Error("The support service returned invalid tickets.");
+          if (sequence !== ticketListSequenceRef.current) return;
+          setTickets(body.tickets);
+          setTicketError("");
+        } catch (loadError) {
+          if (sequence !== ticketListSequenceRef.current) return;
+          setTicketError(loadError instanceof Error ? loadError.message : "Unable to load your support tickets.");
+        }
+      })();
     }, 0);
     return () => { window.clearTimeout(initialLoad); window.clearInterval(refreshLoad); window.clearTimeout(ticketLoad); };
   }, []);
@@ -69,14 +83,25 @@ export default function DashboardClient() {
 
   async function submitTicket(event: React.FormEvent) {
     event.preventDefault();
-    const response = await fetch("/api/support/tickets", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ subject: ticketSubject, message: ticketMessage }) });
-    const body = await readJsonResponse<{ ticket?: Ticket; error?: string }>(response);
-    if (!response.ok) { setError(body.error || "Your support ticket could not be submitted."); return; }
-    if (body.ticket) {
-      const ticket = body.ticket as Ticket;
-      setTickets((current) => [ticket, ...current]);
+    if (ticketBusy) return;
+    setTicketBusy(true);
+    setTicketError("");
+    try {
+      const response = await fetch("/api/support/tickets", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ subject: ticketSubject, message: ticketMessage }) });
+      const body = await readJsonResponse<{ ticket?: Ticket; error?: string }>(response);
+      if (!response.ok) throw new Error(body.error || "Your support ticket could not be submitted.");
+      const submittedTicket = body.ticket;
+      if (!submittedTicket) throw new Error("The support service did not return the submitted ticket.");
+      ticketListSequenceRef.current += 1;
+      setTickets((current) => [submittedTicket, ...current]);
+      setTicketSubject("");
+      setTicketMessage("");
+      setTicketOpen(false);
+    } catch (submitError) {
+      setTicketError(submitError instanceof Error ? submitError.message : "Your support ticket could not be submitted.");
+    } finally {
+      setTicketBusy(false);
     }
-    setTicketSubject(""); setTicketMessage(""); setTicketOpen(false);
   }
 
   if (!data) return <main className="dashboard"><div className="dashboard-fallback"><p>{error || "Loading your learning dashboard..."}</p>{error && <button className="submit-button" onClick={() => void loadDashboard()}>Retry loading dashboard</button>}</div></main>;
@@ -95,6 +120,6 @@ export default function DashboardClient() {
     {error && <p className="login-error" role="alert">{error}</p>}
     {data.certificates.length > 0 && <section className="certificate-section" id="certificate-list"><div className="catalog-heading"><div><p className="eyebrow">EARNED CREDENTIALS</p><h2>Your certificates.</h2></div></div><div className="certificate-grid">{data.certificates.map((certificate) => <CertificateCard key={certificate.verificationHash} certificate={certificate} />)}</div></section>}
     <section className="course-grid">{visibleCourses.map((course) => { const enrolled = data.enrollments.includes(course.id); const completed = Boolean(course.isCompleted || data.completedCourseSlugs?.includes(course.id)); const seats = scarcityFor(course); return <article className="course-card" key={course.id}><div className="course-card-topline"><p className="course-category">{course.category}</p>{course.isTrending && <span className="course-trend-badge">TRENDING 2026</span>}</div><h3>{course.title}</h3>{completed && <p className="course-status-badge">Completed</p>}<p>{course.description}</p><div className="micro-learning"><span>12-min lessons</span><span>6 modules</span><span>Practical exam</span></div><div className="credential-preview"><span className="credential-mark">✓</span><span><strong>SKILLDUCK</strong><small>VERIFIABLE CREDENTIAL</small></span></div><p className="scarcity-badge"><span className="live-dot" /> {seats} seats left in this cohort</p><div className="course-card-actions"><button className="course-action" disabled={busy === course.id} onClick={() => enrolled ? router.push(`/course/${course.id}`) : void enroll(course.id)}>{completed ? "View Course" : enrolled ? "Enrolled / View Course" : busy === course.id ? "Saving..." : "Enroll / View Course"} <span aria-hidden="true">-&gt;</span></button><button className="buy-card-action" onClick={() => router.push(`/checkout?course=${encodeURIComponent(course.id)}`)}>Buy Now / Enroll &amp; Pay</button></div></article>; })}</section>
-    <section className="support-panel"><div><p className="eyebrow">STUDENT SUPPORT</p><h2>Need a hand?</h2><p>{tickets.length} ticket{tickets.length === 1 ? "" : "s"} submitted</p></div><button className="course-action" onClick={() => setTicketOpen(!ticketOpen)}>{ticketOpen ? "Close" : "Open support ticket"}</button>{ticketOpen && <form className="ticket-form" onSubmit={submitTicket}><input placeholder="Subject" value={ticketSubject} onChange={(event) => setTicketSubject(event.target.value)} required /><textarea placeholder="How can we help?" value={ticketMessage} onChange={(event) => setTicketMessage(event.target.value)} rows={4} required /><button className="submit-button" type="submit">Submit ticket</button></form>}{tickets.length > 0 && <div className="ticket-list">{tickets.slice(0, 3).map((ticket) => <div key={ticket.id}><p><strong>{ticket.subject}</strong> <span>{ticket.status}</span></p>{ticket.adminNote && <p className="ticket-reply">Admin reply: {ticket.adminNote}</p>}</div>)}</div>}</section>
+    <section className="support-panel"><div><p className="eyebrow">STUDENT SUPPORT</p><h2>Need a hand?</h2><p>{tickets.length} ticket{tickets.length === 1 ? "" : "s"} submitted</p></div><button className="course-action" onClick={() => setTicketOpen(!ticketOpen)}>{ticketOpen ? "Close" : "Open support ticket"}</button>{ticketError && <p className="login-error" role="alert">{ticketError}</p>}{ticketOpen && <form className="ticket-form" onSubmit={submitTicket}><input placeholder="Subject" value={ticketSubject} onChange={(event) => setTicketSubject(event.target.value)} maxLength={200} required /><textarea placeholder="How can we help?" value={ticketMessage} onChange={(event) => setTicketMessage(event.target.value)} rows={4} maxLength={5000} required /><button className="submit-button" type="submit" disabled={ticketBusy}>{ticketBusy ? "Submitting..." : "Submit ticket"}</button></form>}{tickets.length > 0 && <div className="ticket-list">{tickets.slice(0, 3).map((ticket) => <div key={ticket.id}><p><strong>{ticket.subject}</strong> <span>{ticket.status}</span></p>{ticket.adminNote && <p className="ticket-reply">Admin reply: {ticket.adminNote}</p>}</div>)}</div>}</section>
   </main>;
 }

@@ -31,7 +31,7 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 
 ## Deploy on Vercel
 
-Set Vercel's **Root Directory** to the repository root containing `package.json`, `next.config.ts`, `prisma/`, and `src/app/`. Keep the Next.js framework preset enabled. The install and build hooks generate Prisma Client automatically; configure `DATABASE_URL` and a production `AUTH_SECRET` (at least 32 characters) in the Vercel project environment.
+Set Vercel's **Root Directory** to the repository root containing `package.json`, `next.config.ts`, `prisma/`, and `src/app/`. Keep the Next.js framework preset enabled. The configured build command runs `prisma db push && next build`, so `DATABASE_URL` must point to the production PostgreSQL database. Set `NEXT_PUBLIC_SITE_URL` to `https://skillduckcourses.site` and configure a production `AUTH_SECRET` (at least 32 characters). For first-time local-admin provisioning, set `LOCAL_ADMIN_EMAIL` and `LOCAL_ADMIN_PASSWORD`; an existing account must already have the `ADMIN` role and will not be promoted based on its email alone.
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 

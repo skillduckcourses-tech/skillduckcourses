@@ -1,3 +1,4 @@
+import type { SupportMessage } from "@prisma/client";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE, verifySession } from "@/src/lib/auth";
@@ -61,14 +62,14 @@ function fallbackReply(message: string): AssistantReply {
   };
 }
 
-async function callAi(message: string): Promise<{ reply: string; escalate: boolean }> {
+async function callAi(message: string, signal: AbortSignal): Promise<{ reply: string; escalate: boolean }> {
   const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (geminiKey) {
     try {
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(geminiKey)}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        signal: AbortSignal.timeout(15000),
+        signal,
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: [{ role: "user", parts: [{ text: message }] }],
@@ -93,7 +94,7 @@ async function callAi(message: string): Promise<{ reply: string; escalate: boole
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-        signal: AbortSignal.timeout(15000),
+        signal,
         body: JSON.stringify({
           model: "gpt-4o-mini",
           temperature: 0.2,
@@ -118,19 +119,23 @@ async function callAi(message: string): Promise<{ reply: string; escalate: boole
 }
 
 function canAccessTicket(ticket: { userId: string | null; userEmail: string | null }, userId: number | null, email: string | null) {
-  if (ticket.userId && userId !== null) return ticket.userId === String(userId);
-  if (!ticket.userId && !ticket.userEmail) return userId === null && email === null;
-  return Boolean(ticket.userEmail && email && ticket.userEmail.toLowerCase() === email.toLowerCase());
+  if (ticket.userId) return userId !== null && ticket.userId === String(userId);
+  if (ticket.userEmail) return Boolean(email && ticket.userEmail.toLowerCase() === email.toLowerCase());
+  return userId === null;
 }
 
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const ticketId = url.searchParams.get("ticketId");
-    if (!ticketId) return NextResponse.json({ error: "Ticket ID is required." }, { status: 400 });
+    const guestEmail = url.searchParams.get("email")?.trim().toLowerCase() || null;
+    if (!ticketId || ticketId.length > 100) return NextResponse.json({ error: "A valid ticket ID is required." }, { status: 400 });
+    if (guestEmail && (guestEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail))) {
+      return NextResponse.json({ error: "Enter a valid email address." }, { status: 400 });
+    }
     const session = await verifySession((await cookies()).get(SESSION_COOKIE)?.value);
     const user = session ? await prisma.user.findUnique({ where: { email: session.email }, select: { id: true } }) : null;
-    const guestEmail = url.searchParams.get("email")?.trim() || null;
+    if (session && !user) return NextResponse.json({ error: "Please sign in again to continue this conversation." }, { status: 401 });
     const ticket = await prisma.supportTicket.findUnique({ where: { id: ticketId }, include: { messages: { orderBy: { createdAt: "asc" } } } });
     if (!ticket || !canAccessTicket(ticket, user?.id ?? null, session?.email || guestEmail)) {
       return NextResponse.json({ error: "Support conversation not found." }, { status: 404 });
@@ -152,6 +157,9 @@ export async function POST(request: Request) {
       userName?: unknown;
       userEmail?: unknown;
     };
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "A JSON request body is required." }, { status: 400 });
+    }
     const message = typeof body.message === "string" ? body.message.trim() : "";
     if (!message || message.length > 5000) return NextResponse.json({ error: "Enter a message up to 5,000 characters." }, { status: 400 });
     const rawName = typeof body.name === "string" ? body.name : typeof body.userName === "string" ? body.userName : "";
@@ -162,30 +170,47 @@ export async function POST(request: Request) {
     if (submittedEmail.length > 254 || (submittedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(submittedEmail))) {
       return NextResponse.json({ error: "Enter a valid email address up to 254 characters." }, { status: 400 });
     }
+    if (body.ticketId !== undefined && (typeof body.ticketId !== "string" || !body.ticketId || body.ticketId.length > 100)) {
+      return NextResponse.json({ error: "Invalid support conversation ID." }, { status: 400 });
+    }
     const requestedTicketId = typeof body.ticketId === "string" ? body.ticketId : "";
     const session = await verifySession((await cookies()).get(SESSION_COOKIE)?.value);
     const user = session ? await prisma.user.findUnique({ where: { email: session.email }, select: { id: true, name: true, fullName: true } }) : null;
+    if (session && !user) return NextResponse.json({ error: "Please sign in again to continue this conversation." }, { status: 401 });
     const userId = user?.id ?? null;
-    const userEmail = session?.email || submittedEmail || null;
+    const userEmail = session?.email || submittedEmail.toLowerCase() || null;
     const userName = (session?.name || user?.fullName || user?.name || submittedName) || "Student";
 
     let ticket = requestedTicketId ? await prisma.supportTicket.findUnique({ where: { id: requestedTicketId } }) : null;
     if (requestedTicketId && (!ticket || !canAccessTicket(ticket, userId, userEmail))) {
       return NextResponse.json({ error: "Support conversation not found." }, { status: 404 });
     }
+    let messages: SupportMessage[];
     if (!ticket) {
-      ticket = await prisma.supportTicket.create({
-        data: { userId: userId === null ? null : String(userId), userName, userEmail },
+      const createdTicket = await prisma.supportTicket.create({
+        data: {
+          userId: userId === null ? null : String(userId),
+          userName,
+          userEmail,
+          messages: { create: { sender: "USER", content: message } },
+        },
+        include: { messages: true },
       });
+      ticket = createdTicket;
+      messages = createdTicket.messages;
+    } else {
+      const previousMessages = await prisma.supportMessage.findMany({
+        where: { ticketId: ticket.id },
+        orderBy: { createdAt: "asc" },
+      });
+      const [userMessage] = await prisma.$transaction([
+        prisma.supportMessage.create({ data: { ticketId: ticket.id, sender: "USER", content: message } }),
+        prisma.supportTicket.update({ where: { id: ticket.id }, data: { status: "OPEN", updatedAt: new Date() } }),
+      ]);
+      messages = [...previousMessages, userMessage];
     }
 
-    await prisma.$transaction([
-      prisma.supportMessage.create({ data: { ticketId: ticket.id, sender: "USER", content: message } }),
-      prisma.supportTicket.update({ where: { id: ticket.id }, data: { status: "OPEN", updatedAt: new Date() } }),
-    ]);
-
     if (!ticket.isAiHandled) {
-      const messages = await prisma.supportMessage.findMany({ where: { ticketId: ticket.id }, orderBy: { createdAt: "asc" } });
       return NextResponse.json({ ticketId: ticket.id, messages, isAiHandled: false, escalated: true }, { status: requestedTicketId ? 200 : 201 });
     }
 
@@ -193,14 +218,29 @@ export async function POST(request: Request) {
     const knownReply = builtInReply(message);
     const aiResult = escalatedByRule
       ? { reply: "An admin has been notified and will review this conversation shortly. For payment disputes, include your TID and receipt, but never share passwords or wallet recovery phrases.", escalate: true }
-      : knownReply ?? await callAi(message);
+      : knownReply ?? await callAi(message, AbortSignal.timeout(6000));
     const escalated = escalatedByRule || aiResult.escalate;
-    const [aiMessage, updatedTicket] = await prisma.$transaction([
-      prisma.supportMessage.create({ data: { ticketId: ticket.id, sender: "AI", content: aiResult.reply } }),
-      prisma.supportTicket.update({ where: { id: ticket.id }, data: { isAiHandled: !escalated, updatedAt: new Date() } }),
-    ]);
-    const messages = await prisma.supportMessage.findMany({ where: { ticketId: ticket.id }, orderBy: { createdAt: "asc" } });
-    return NextResponse.json({ ticketId: updatedTicket.id, messages: messages.length ? messages : [aiMessage], isAiHandled: updatedTicket.isAiHandled, escalated }, { status: requestedTicketId ? 200 : 201 });
+    try {
+      const [aiMessage, updatedTicket] = await prisma.$transaction([
+        prisma.supportMessage.create({ data: { ticketId: ticket.id, sender: "AI", content: aiResult.reply } }),
+        prisma.supportTicket.update({ where: { id: ticket.id }, data: { isAiHandled: !escalated, updatedAt: new Date() } }),
+      ]);
+      return NextResponse.json({
+        ticketId: updatedTicket.id,
+        messages: [...messages, aiMessage],
+        isAiHandled: updatedTicket.isAiHandled,
+        escalated,
+      }, { status: requestedTicketId ? 200 : 201 });
+    } catch (error) {
+      console.error("Help-desk reply could not be saved; the user message was already recorded.", error);
+      return NextResponse.json({
+        ticketId: ticket.id,
+        messages,
+        isAiHandled: ticket.isAiHandled,
+        escalated: false,
+        warning: "Your message was received, but the assistant response could not be saved. Admin support can still respond.",
+      }, { status: requestedTicketId ? 200 : 201 });
+    }
   } catch (error) {
     console.error("Help-desk message submission failed", error);
     return NextResponse.json({ error: "Unable to send your message. Please try again." }, { status: 500 });
