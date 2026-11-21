@@ -8,7 +8,7 @@ export default async function AdminSecurityPage() {
   const admin = await requireAdmin();
   if (!admin) redirect("/");
 
-  const authSecretReady = Boolean(process.env.AUTH_SECRET && process.env.AUTH_SECRET.length >= 32);
+  const authSecretReady = (process.env.AUTH_SECRET?.trim().length ?? 0) >= 32;
   const aiProviderReady = Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.OPENAI_API_KEY);
   const checks = [
     { title: "Administrator role verified", detail: "Admin routes and sensitive operations verify the account role against the database.", ready: true },

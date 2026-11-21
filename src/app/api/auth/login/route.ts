@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { ADMIN_EMAIL, createSession, SESSION_COOKIE } from "@/src/lib/auth";
+import { ADMIN_EMAIL, assertAuthSecretConfigured, AuthConfigurationError, createSession, SESSION_COOKIE } from "@/src/lib/auth";
 import { hashPassword, verifyLocalCredentials } from "@/src/lib/server-auth";
-import { prisma } from "@/src/lib/prisma";
+import { assertDatabaseConfigured, DatabaseConfigurationError, isPrismaConnectionFailure, prisma, prismaErrorDiagnostics } from "@/src/lib/prisma";
 
 export async function POST(request: Request) {
   try {
@@ -15,13 +15,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Enter a valid email address." }, { status: 400 });
     }
 
+    assertAuthSecretConfigured();
+    assertDatabaseConfigured();
+
     let user = await prisma.user.findUnique({ where: { email } });
     const adminEmail = (process.env.LOCAL_ADMIN_EMAIL || ADMIN_EMAIL).trim().toLowerCase();
     if (!user && email === adminEmail) {
       const adminPassword = process.env.LOCAL_ADMIN_PASSWORD;
       if (process.env.NODE_ENV === "production" && !adminPassword) {
         console.error("Cannot initialize the production admin account: LOCAL_ADMIN_PASSWORD is not configured.");
-        return NextResponse.json({ error: "Admin sign-in is not configured." }, { status: 503 });
+        return NextResponse.json({ error: "Admin sign-in is not configured. Please contact support.", code: "ADMIN_AUTH_NOT_CONFIGURED" }, { status: 503 });
       }
       user = await prisma.user.create({
         data: {
@@ -49,7 +52,19 @@ export async function POST(request: Request) {
     });
     return response;
   } catch (error) {
-    console.error("Local sign-in failed.", error);
-    return NextResponse.json({ error: "Sign-in is temporarily unavailable." }, { status: 500 });
+    if (error instanceof AuthConfigurationError) {
+      console.error("Local sign-in is blocked by invalid auth configuration.", error.code);
+      return NextResponse.json({ error: "Sign-in is not configured correctly. Please contact support.", code: error.code }, { status: 503 });
+    }
+    if (error instanceof DatabaseConfigurationError) {
+      console.error("Local sign-in is blocked by invalid database configuration.", error.code);
+      return NextResponse.json({ error: "The account service is not configured correctly. Please contact support.", code: error.code }, { status: 503 });
+    }
+    const diagnostics = prismaErrorDiagnostics(error);
+    console.error("Local sign-in failed.", diagnostics);
+    if (isPrismaConnectionFailure(error)) {
+      return NextResponse.json({ error: "The account database is temporarily unavailable. Please try again shortly.", code: "DATABASE_UNAVAILABLE" }, { status: 503 });
+    }
+    return NextResponse.json({ error: "Sign-in failed because of a server error. Please try again later.", code: "AUTH_INTERNAL_ERROR" }, { status: 500 });
   }
 }

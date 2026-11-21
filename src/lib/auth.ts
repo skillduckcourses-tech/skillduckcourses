@@ -3,6 +3,15 @@ import { jwtVerify, SignJWT } from "jose";
 export const SESSION_COOKIE = "skillduck_session";
 export const ADMIN_EMAIL = "admin@theelitegrow.me";
 
+export class AuthConfigurationError extends Error {
+  readonly code = "AUTH_CONFIGURATION_ERROR";
+
+  constructor() {
+    super("AUTH_SECRET must contain at least 32 characters in production.");
+    this.name = "AuthConfigurationError";
+  }
+}
+
 export type Session = {
   email: string;
   name: string;
@@ -11,13 +20,19 @@ export type Session = {
 };
 
 function secret() {
-  const configuredSecret = process.env.AUTH_SECRET;
-  if (process.env.NODE_ENV === "production" && (!configuredSecret || configuredSecret.length < 32)) {
-    throw new Error("AUTH_SECRET must be configured with at least 32 characters in production.");
+  const rawSecret = process.env.AUTH_SECRET;
+  const configuredSecret = rawSecret?.trim();
+  if (
+    (rawSecret !== undefined && !configuredSecret) ||
+    (process.env.NODE_ENV === "production" && (!configuredSecret || configuredSecret.length < 32))
+  ) {
+    throw new AuthConfigurationError();
   }
-  return new TextEncoder().encode(
-    configuredSecret || "development-only-change-me",
-  );
+  return new TextEncoder().encode(configuredSecret || "development-only-change-me");
+}
+
+export function assertAuthSecretConfigured() {
+  secret();
 }
 
 export async function createSession(session: Session) {

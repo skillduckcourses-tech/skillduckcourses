@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
-import { ADMIN_EMAIL, createSession, SESSION_COOKIE } from "@/src/lib/auth";
-import { prisma } from "@/src/lib/prisma";
+import { ADMIN_EMAIL, assertAuthSecretConfigured, AuthConfigurationError, createSession, SESSION_COOKIE } from "@/src/lib/auth";
+import { assertDatabaseConfigured, DatabaseConfigurationError, prisma, prismaErrorDiagnostics } from "@/src/lib/prisma";
 import { hashPassword } from "@/src/lib/server-auth";
 
 type GoogleProfile = { sub?: string; email?: string; name?: string; email_verified?: boolean };
@@ -17,6 +17,9 @@ export async function GET(request: Request) {
   if (!code || !clientId || !clientSecret) return NextResponse.redirect(new URL("/?error=oauth_failed", request.url));
   const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${url.origin}/api/auth/google/callback`;
   try {
+    assertAuthSecretConfigured();
+    assertDatabaseConfigured();
+
     const tokenResponse = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri, grant_type: "authorization_code" }) });
     if (!tokenResponse.ok) return NextResponse.redirect(new URL("/?error=oauth_failed", request.url));
     const token = (await tokenResponse.json()) as { access_token?: string };
@@ -34,8 +37,18 @@ export async function GET(request: Request) {
     response.cookies.delete("skillduck_oauth_state");
     return response;
   } catch (error) {
-    console.error("Google sign-in failed.", error);
-    const response = NextResponse.redirect(new URL("/?error=oauth_failed", request.url));
+    const diagnostics = error instanceof AuthConfigurationError || error instanceof DatabaseConfigurationError
+      ? { errorName: error.name, code: error.code }
+      : prismaErrorDiagnostics(error);
+    console.error("Google sign-in failed.", diagnostics);
+    const response = NextResponse.json(
+      error instanceof AuthConfigurationError
+        ? { error: "Sign-in is not configured correctly. Please contact support.", code: error.code }
+        : error instanceof DatabaseConfigurationError
+          ? { error: "The account service is not configured correctly. Please contact support.", code: error.code }
+          : { error: "Google sign-in is temporarily unavailable. Please try again shortly.", code: "OAUTH_SERVICE_UNAVAILABLE" },
+      { status: 503 },
+    );
     response.cookies.delete("skillduck_oauth_state");
     return response;
   }
