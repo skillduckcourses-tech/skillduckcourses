@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { useState } from "react";
+import type { FormEvent, PointerEvent } from "react";
 import { useRouter } from "next/navigation";
 import SocialProof from "./social-proof";
 
@@ -12,6 +13,23 @@ export default function HomeClient() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+
+  function handleHeroCardPointerMove(event: PointerEvent<HTMLDivElement>) {
+    if (event.pointerType === "touch" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+    const bounds = event.currentTarget.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return;
+
+    const x = (event.clientX - bounds.left) / bounds.width - 0.5;
+    const y = (event.clientY - bounds.top) / bounds.height - 0.5;
+    event.currentTarget.style.setProperty("--hero-card-tilt-x", `${(-y * 5).toFixed(2)}deg`);
+    event.currentTarget.style.setProperty("--hero-card-tilt-y", `${(x * 7).toFixed(2)}deg`);
+  }
+
+  function resetHeroCardTilt(event: PointerEvent<HTMLDivElement>) {
+    event.currentTarget.style.setProperty("--hero-card-tilt-x", "0deg");
+    event.currentTarget.style.setProperty("--hero-card-tilt-y", "0deg");
+  }
 
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -43,7 +61,7 @@ export default function HomeClient() {
       <section className="hero-intro">
         <div className="hero-topline"><span>SKILLDUCK / PROFESSIONAL LEARNING PLATFORM</span><span>BUILD SKILLS. SHOW PROOF.</span></div>
         <div className="hero-copy"><div><div className="hero-badge"><span className="status-dot" /> Trusted credentials for ambitious builders</div><p className="eyebrow">CERTIFIED SKILLDUCK / 2026</p><h1>Turn learning into <em>leverage.</em></h1><p className="lead">Focused pathways, practical assessments, and verifiable certificates for the work you want next.</p><div className="hero-actions"><a className="hero-primary" href="#access">Start learning <span aria-hidden="true">-&gt;</span></a><a className="hero-secondary" href="#pathways">Explore pathways</a></div><div className="trust-row"><span><strong>1,240+</strong> active learners</span><span><strong>50</strong> practical pathways</span><span><strong>100%</strong> verifiable results</span></div><SocialProof /></div>
-          <div className="landing-panel">
+          <div className="landing-panel" onPointerMove={handleHeroCardPointerMove} onPointerLeave={resetHeroCardTilt}>
             <p className="eyebrow" id="access">YOUR NEXT MILESTONE</p>
             <h2>Move with intent.</h2>
             <p className="form-intro">Sign in to pick up a pathway, or create an account and start building your credential.</p>

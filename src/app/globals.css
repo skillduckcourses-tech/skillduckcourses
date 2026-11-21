@@ -416,3 +416,37 @@ body:has(.admin-workspace) .whatsapp-support,body:has(.admin-workspace) .helpdes
   .global-nav { gap: 4px 12px; padding: 8px 14px; }
   .nav-links { gap: 4px 12px; }
 }
+
+.landing .landing-panel {
+  position: relative;
+  transform: perspective(1100px) rotateX(var(--hero-card-tilt-x, 0deg)) rotateY(var(--hero-card-tilt-y, 0deg));
+  transform-style: preserve-3d;
+  transition: transform 180ms ease-out;
+}
+.landing .landing-panel::before {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  width: 12px;
+  height: 12px;
+  border: 1px solid rgba(45, 212, 191, .8);
+  border-radius: 4px;
+  background: rgba(45, 212, 191, .18);
+  box-shadow: 0 0 18px rgba(45, 212, 191, .45);
+  content: "";
+  pointer-events: none;
+  transform: translate3d(0, 0, 40px) rotate(45deg);
+  animation: credential-float 3.2s ease-in-out infinite;
+}
+@keyframes credential-float {
+  0%, 100% { transform: translate3d(0, 0, 40px) rotate(45deg); }
+  50% { transform: translate3d(0, -5px, 40px) rotate(135deg); }
+}
+@media (max-width: 800px) {
+  .landing .landing-panel { transform: none; transition: none; }
+  .landing .landing-panel::before { transform: rotate(45deg); animation: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .landing .landing-panel { transform: none; transition: none; }
+  .landing .landing-panel::before { transform: rotate(45deg); animation: none; }
+}
