@@ -1,0 +1,34 @@
+import { NextRequest, NextResponse } from "next/server";
+import { SESSION_COOKIE, verifySession } from "@/src/lib/auth";
+
+export async function proxy(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  if (pathname.startsWith("/verify/") || pathname.startsWith("/certificates/") || pathname.startsWith("/api/certificates/verify/")) {
+    return NextResponse.next();
+  }
+  const session = await verifySession(request.cookies.get(SESSION_COOKIE)?.value);
+  const adminPage = pathname === "/admin" || pathname.startsWith("/admin/");
+  const adminApi = pathname.startsWith("/api/admin/");
+  if (adminPage && !session?.isAdmin) {
+    return NextResponse.redirect(new URL("/", request.url));
+  }
+  if (adminApi && !session?.isAdmin) {
+    return NextResponse.json({ error: "Admin access required." }, { status: 403 });
+  }
+  if (!session) {
+    return NextResponse.redirect(new URL("/", request.url));
+  }
+  if (request.nextUrl.pathname.startsWith("/exam") && !request.cookies.get("skillduck_exam_access")) {
+    return NextResponse.redirect(new URL("/dashboard?error=watch_required", request.url));
+  }
+
+  const response = NextResponse.next();
+  response.headers.set("x-skillduck-admin", String(session.isAdmin));
+  response.headers.set("x-skillduck-payment-bypass", String(session.canBypassPayment));
+  return response;
+}
+
+
+export const config = {
+  matcher: ["/admin/:path*", "/api/admin/:path*", "/dashboard/:path*", "/profile/:path*", "/api/profile/:path*", "/api/dashboard/:path*", "/exam/:path*", "/api/exams/:path*"],
+};

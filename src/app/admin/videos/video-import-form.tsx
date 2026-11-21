@@ -1,0 +1,11 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+export default function VideoImportForm() {
+  const [courseId, setCourseId] = useState(""); const [query, setQuery] = useState(""); const [courses, setCourses] = useState<{ id: number; title: string; slug: string; category: string }[]>([]); const [lines, setLines] = useState(""); const [message, setMessage] = useState("");
+  useEffect(() => { void fetch("/api/admin/courses").then((response) => response.json()).then((body: { courses?: typeof courses }) => setCourses(body.courses || [])).catch(() => setCourses([])); }, []);
+  const visibleCourses = useMemo(() => courses.filter((course) => `${course.title} ${course.slug} ${course.category}`.toLowerCase().includes(query.toLowerCase())).slice(0, 8), [courses, query]);
+  async function submit(event: React.FormEvent) { event.preventDefault(); const response = await fetch("/api/admin/videos", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ courseId: Number(courseId), lines }) }); const body = await response.json(); setMessage(response.ok ? `Imported ${body.imported} videos into ${body.course.title}.` : body.error); }
+  return <form className="admin-form" onSubmit={submit}><label>Search published course<input value={query} onChange={(event) => { setQuery(event.target.value); setCourseId(""); }} placeholder="Search by course title or slug" required />{query && !courseId && <span className="course-autocomplete admin-course-picker">{visibleCourses.map((course) => <button type="button" key={course.id} onClick={() => { setCourseId(String(course.id)); setQuery(course.title); }}>{course.title}<small>{course.category} / {course.slug}</small></button>)}{visibleCourses.length === 0 && <span>No published course matches.</span>}</span>}<input type="hidden" value={courseId} /></label><label>Batch video lines<textarea value={lines} onChange={(event) => setLines(event.target.value)} placeholder="dQw4w9WgXcQ | Video title | Opening hook | utm_source=youtube" rows={10} required /></label><button className="submit-button" type="submit" disabled={!courseId}>Import videos <span aria-hidden="true">-&gt;</span></button>{message && <p role="status">{message}</p>}</form>;
+}
