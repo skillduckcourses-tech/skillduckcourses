@@ -55,10 +55,15 @@ export default function CheckoutClient() {
     void fetch("/api/courses").then(async (response) => {
       const body = await readJson<{ courses?: Course[]; error?: string }>(response);
       if (!response.ok) throw new Error(body.error || `Course list failed (${response.status}).`);
-      const available = body.courses || [];
+      if (!Array.isArray(body.courses)) throw new Error("The course service returned an invalid response.");
+      const available = body.courses;
       setCourses(available);
-      const selected = available.find((course) => course.slug === (searchParams.get("course") || ""));
-      if (selected) { setCourseSlug(selected.slug); setCourseQuery(selected.title); }
+      const requestedSlug = searchParams.get("course") || "";
+      const selected = available.find((course) => course.slug === requestedSlug);
+      setCourseSlug(selected?.slug || "");
+      setCourseQuery(selected?.title || "");
+      if (available.length === 0) setMessage("No published courses are currently available for checkout.");
+      else if (requestedSlug && !selected) setMessage("The selected course is no longer available for checkout.");
     }).catch((error: unknown) => setMessage(error instanceof Error ? error.message : "Unable to load courses."));
   }, [searchParams]);
 
@@ -115,6 +120,11 @@ export default function CheckoutClient() {
       if (proof) formData.set("proof", proof);
       const response = await fetch("/api/payments/checkout", { method: "POST", body: formData });
       const body = await readJson<{ error?: string; bypassed?: boolean; status?: string; paymentId?: number; alreadySubmitted?: boolean }>(response);
+      if (response.status === 401) {
+        const next = `/checkout?course=${encodeURIComponent(selectedCourse.slug)}`;
+        window.location.replace(`/?next=${encodeURIComponent(next)}`);
+        return;
+      }
       if (!response.ok) throw new Error(body.error || `Payment submission failed (${response.status}).`);
       if (body.bypassed) {
         setMessage("Admin access confirmed. Certificate payment bypassed.");

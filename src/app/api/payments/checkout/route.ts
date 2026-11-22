@@ -4,13 +4,16 @@ import path from "path";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE, verifySession } from "@/src/lib/auth";
-import { prisma } from "@/src/lib/prisma";
+import { DatabaseConfigurationError, isPrismaConnectionFailure, prisma, prismaErrorDiagnostics } from "@/src/lib/prisma";
 import { paymentOptions, type PaymentOptionKey } from "@/src/lib/payments";
 import { createCertificateRequest } from "@/src/lib/certificates";
 
 export const runtime = "nodejs";
 
 type CheckoutPayload = { courseSlug?: unknown; method?: unknown; reference?: unknown; proof?: unknown };
+
+class ReceiptValidationError extends Error {}
+class ReceiptStorageUnavailableError extends Error {}
 
 async function readPayload(request: Request): Promise<CheckoutPayload> {
   if (request.headers.get("content-type")?.includes("multipart/form-data")) {
@@ -26,9 +29,9 @@ async function readPayload(request: Request): Promise<CheckoutPayload> {
 }
 
 async function saveProof(file: File) {
-  if (file.size < 1 || file.size > 8 * 1024 * 1024) throw new Error("Payment receipts must be no larger than 8 MB.");
+  if (file.size < 1 || file.size > 8 * 1024 * 1024) throw new ReceiptValidationError("Payment receipts must be no larger than 8 MB.");
   const allowed = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
-  if (!allowed.has(file.type)) throw new Error("Upload a JPG, PNG, WebP, or PDF payment receipt.");
+  if (!allowed.has(file.type)) throw new ReceiptValidationError("Upload a JPG, PNG, WebP, or PDF payment receipt.");
   const bytes = new Uint8Array(await file.arrayBuffer());
   const header = new TextDecoder().decode(bytes.slice(0, 8));
   const valid = file.type === "image/jpeg"
@@ -38,7 +41,8 @@ async function saveProof(file: File) {
       : file.type === "image/webp"
         ? header.startsWith("RIFF") && header.slice(8, 12) === "WEBP"
         : header.startsWith("%PDF-");
-  if (!valid) throw new Error("The uploaded receipt file does not match its format.");
+  if (!valid) throw new ReceiptValidationError("The uploaded receipt file does not match its format.");
+  if (process.env.VERCEL) throw new ReceiptStorageUnavailableError("Durable receipt storage is not configured for this deployment.");
   const extension = file.type === "image/jpeg" ? ".jpg" : file.type === "image/png" ? ".png" : file.type === "image/webp" ? ".webp" : ".pdf";
   const filename = `${randomUUID()}${extension}`;
   const directory = path.join(process.cwd(), "private", "payment-proofs");
@@ -87,11 +91,21 @@ export async function POST(request: Request) {
     }
 
     let proofUrl: string | undefined;
+    if (body.proof !== undefined && body.proof !== null && !(body.proof instanceof File)) {
+      return NextResponse.json({ error: "The payment receipt upload is invalid." }, { status: 400 });
+    }
     if (body.proof instanceof File && body.proof.size > 0) {
       try {
         proofUrl = await saveProof(body.proof);
       } catch (error) {
-        return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to save the receipt." }, { status: 400 });
+        if (error instanceof ReceiptValidationError) {
+          return NextResponse.json({ error: error.message }, { status: 400 });
+        }
+        console.error("Payment receipt storage failed.", prismaErrorDiagnostics(error));
+        return NextResponse.json({
+          error: "Receipt storage is unavailable. Remove the optional file and submit the transaction reference, or contact support.",
+          code: "PAYMENT_PROOF_STORAGE_UNAVAILABLE",
+        }, { status: 503 });
       }
     }
 
@@ -116,7 +130,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true, paymentId: payment.id, status: payment.status, certificateStatus: "PENDING_APPROVAL", instructions: { label: option.label, amount: option.amount, currency: option.currency } }, { status: 201 });
   } catch (error) {
-    console.error("Certificate payment submission failed", error);
-    return NextResponse.json({ error: "Unable to submit payment for verification. Please try again." }, { status: 500 });
+    const diagnostics = prismaErrorDiagnostics(error);
+    console.error("Certificate payment submission failed.", diagnostics);
+    const unavailable = isPrismaConnectionFailure(error) || error instanceof DatabaseConfigurationError;
+    return NextResponse.json({
+      error: unavailable ? "The payment service is temporarily unavailable. Please try again shortly." : "Unable to submit payment for verification. Please try again.",
+      code: unavailable ? "PAYMENT_DATABASE_UNAVAILABLE" : "PAYMENT_SUBMISSION_ERROR",
+    }, { status: unavailable ? 503 : 500 });
   }
 }

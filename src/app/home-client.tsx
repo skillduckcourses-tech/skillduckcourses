@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import type { FormEvent, PointerEvent } from "react";
-import { useRouter } from "next/navigation";
 import SocialProof from "./social-proof";
 
 export default function HomeClient() {
@@ -12,7 +11,6 @@ export default function HomeClient() {
   const [signup, setSignup] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
 
   function handleHeroCardPointerMove(event: PointerEvent<HTMLDivElement>) {
     if (event.pointerType === "touch" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -48,29 +46,28 @@ export default function HomeClient() {
       if (!response.ok) throw new Error(body?.error || "Unable to sign in.");
 
       if (signup) {
-        setSignup(false);
-        setPassword("");
-        setError("Account created. Sign in with your new password.");
-      } else {
-        const requestedPath = new URLSearchParams(window.location.search).get("next");
-        let destination: string | null = null;
-        if (requestedPath) {
-          try {
-            const url = new URL(requestedPath, window.location.origin);
-            if (url.origin === window.location.origin) destination = `${url.pathname}${url.search}${url.hash}`;
-          } catch {
-            destination = null;
-          }
-        }
-
-        const isAdmin = body?.user?.isAdmin === true;
-        const requestingAdmin = destination === "/admin" || destination?.startsWith("/admin/") === true;
-        if (requestingAdmin && !isAdmin) {
-          setError("This account does not have administrator access.");
-          return;
-        }
-        router.replace(destination || (isAdmin ? "/admin" : "/dashboard"));
+        window.location.replace("/dashboard");
+        return;
       }
+
+      const requestedPath = new URLSearchParams(window.location.search).get("next");
+      let destination: string | null = null;
+      if (requestedPath) {
+        try {
+          const url = new URL(requestedPath, window.location.origin);
+          if (url.origin === window.location.origin) destination = `${url.pathname}${url.search}${url.hash}`;
+        } catch {
+          destination = null;
+        }
+      }
+
+      const isAdmin = body?.user?.isAdmin === true;
+      const requestingAdmin = destination === "/admin" || destination?.startsWith("/admin/") === true;
+      if (requestingAdmin && !isAdmin) {
+        setError("This account does not have administrator access.");
+        return;
+      }
+      window.location.replace(destination || (isAdmin ? "/admin" : "/dashboard"));
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : "Unable to sign in.");
     } finally {
@@ -90,7 +87,7 @@ export default function HomeClient() {
             <form className="login-form" onSubmit={login}>
               {signup && <label>Name<input type="text" value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" required /></label>}
               <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" required /></label>
-              <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>
+              <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={signup ? "new-password" : "current-password"} required /></label>
               <button className="google-button" type="submit" disabled={loading}>{loading ? "Working..." : signup ? "Create account" : "Continue locally"} <span aria-hidden="true">-&gt;</span></button>
               {error && <p className="login-error" role="alert">{error}</p>}
             </form>

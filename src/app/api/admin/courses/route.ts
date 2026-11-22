@@ -5,7 +5,7 @@ import type { Prisma } from "@prisma/client";
 import PDFDocument from "pdfkit";
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/src/lib/server-session";
-import { prisma } from "@/src/lib/prisma";
+import { isPrismaConnectionFailure, prisma, prismaErrorDiagnostics } from "@/src/lib/prisma";
 import { youtubeVideoId } from "@/src/lib/youtube";
 import { COURSE_PRICE_PKR } from "@/src/lib/pricing";
 
@@ -425,7 +425,14 @@ export async function GET() {
     const courses = await prisma.course.findMany({ where: { isPublished: true }, orderBy: [{ isTrending: "desc" }, { ranking: "asc" }, { title: "asc" }], select: { id: true, slug: true, title: true, category: true, ranking: true, isTrending: true } });
     return NextResponse.json({ success: true, courses });
   } catch (error) {
-    return jsonError(500, error instanceof Error ? error.message : "Unable to load published courses.");
+    const diagnostics = prismaErrorDiagnostics(error);
+    console.error("Failed to load the published course catalog.", diagnostics);
+    const unavailable = isPrismaConnectionFailure(error) || diagnostics.errorName === "DatabaseConfigurationError";
+    return jsonError(
+      unavailable ? 503 : 500,
+      unavailable ? "The published course catalog is temporarily unavailable. Check the database connection and try again." : "Unable to load published courses.",
+      { code: unavailable ? "COURSE_DATABASE_UNAVAILABLE" : "COURSE_CATALOG_ERROR" },
+    );
   }
 }
 

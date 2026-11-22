@@ -33,6 +33,10 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 
 Set Vercel's **Root Directory** to the repository root containing `package.json`, `next.config.ts`, `prisma/`, and `src/app/`. Keep the Next.js framework preset enabled. The configured build command runs `prisma db push && npm run build`; the package build script generates Prisma Client before `next build`, so `DATABASE_URL` must point to the production PostgreSQL database. Use the provider's pooled PostgreSQL URL for Vercel serverless functions. Set `NEXT_PUBLIC_SITE_URL` to `https://skillduckcourses.site` and configure a production `AUTH_SECRET` (at least 32 non-whitespace characters). For first-time local-admin provisioning, set `LOCAL_ADMIN_EMAIL` and `LOCAL_ADMIN_PASSWORD`; an existing account must already have the `ADMIN` role and will not be promoted based on its email alone.
 
+`prisma db push` synchronizes tables but does not add course content. To seed the 66 starter courses, run `npm run db:seed` with `DATABASE_URL` set to the same PostgreSQL database used by the deployment. The seed can be rerun safely: it publishes the starter courses and assessments without deleting certificates, exam attempts, or existing questions, or overwriting course content. The starter seed does not create lesson records, so publish lesson materials through the Admin Course Studio. Lesson uploads currently write to the app filesystem; use durable object storage before relying on uploaded files in Vercel production.
+
+Payment receipt files also use local instance storage. On Vercel, configure durable object storage before relying on uploaded receipts; without it, payment submissions can still be made using the transaction reference without attaching a receipt.
+
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

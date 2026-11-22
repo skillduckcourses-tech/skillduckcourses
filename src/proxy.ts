@@ -9,6 +9,14 @@ export async function proxy(request: NextRequest) {
   const session = await verifySession(request.cookies.get(SESSION_COOKIE)?.value);
   const adminPage = pathname === "/admin" || pathname.startsWith("/admin/");
   const adminApi = pathname.startsWith("/api/admin/");
+  if (adminApi) {
+    if (!session) {
+      return NextResponse.json({ error: "Authentication required.", code: "UNAUTHENTICATED" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+    }
+    if (!session.isAdmin) {
+      return NextResponse.json({ error: "Admin access required.", code: "ADMIN_REQUIRED" }, { status: 403, headers: { "Cache-Control": "no-store" } });
+    }
+  }
   if (adminPage && !session?.isAdmin) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/";
@@ -16,10 +24,10 @@ export async function proxy(request: NextRequest) {
     loginUrl.searchParams.set("next", `${pathname}${request.nextUrl.search}`);
     return NextResponse.redirect(loginUrl);
   }
-  if (adminApi && !session?.isAdmin) {
-    return NextResponse.json({ error: "Admin access required." }, { status: 403 });
-  }
   if (!session) {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json({ error: "Authentication required.", code: "UNAUTHENTICATED" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+    }
     return NextResponse.redirect(new URL("/", request.url));
   }
   if (request.nextUrl.pathname.startsWith("/exam") && !request.cookies.get("skillduck_exam_access")) {

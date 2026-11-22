@@ -137,18 +137,14 @@ const examVariants = [
 async function main() {
   const total = Object.values(groups).reduce((count, [, titles]) => count + titles.length, 0);
   if (total !== 66) throw new Error(`Expected 66 courses, found ${total}`);
-  await prisma.certificate.deleteMany();
-  await prisma.examSession.deleteMany();
-  await prisma.exam.deleteMany();
   let rank = 0;
   for (const [category, [label, titles]] of Object.entries(groups)) {
-    for (const [index, title] of titles.entries()) {
+    for (const title of titles) {
       rank += 1;
       const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
       const isTrending = rank <= 12;
-      const course = await prisma.course.upsert({ where: { slug }, update: { title, category, price: coursePricePkr, isPublished: true, isTrending, ranking: rank }, create: { slug, title, category, price: coursePricePkr, isPublished: true, isTrending, ranking: rank, description: `Professional certificate pathway: ${title}.` } });
-      const exam = await prisma.exam.upsert({ where: { courseId_title: { courseId: course.id, title: `${title} Assessment` } }, update: { description: `${label} assessment`, durationMin: 23, passingScore: 70, isPublished: true }, create: { courseId: course.id, title: `${title} Assessment`, description: `${label} assessment`, durationMin: 23, passingScore: 70, isPublished: true } });
-      await prisma.question.deleteMany({ where: { examId: exam.id } });
+      const course = await prisma.course.upsert({ where: { slug }, update: { isPublished: true }, create: { slug, title, category, price: coursePricePkr, isPublished: true, isTrending, ranking: rank, description: `Professional certificate pathway: ${title}.` } });
+      const exam = await prisma.exam.upsert({ where: { courseId_title: { courseId: course.id, title: `${title} Assessment` } }, update: { isPublished: true }, create: { courseId: course.id, title: `${title} Assessment`, description: `${label} assessment`, durationMin: 23, passingScore: 70, isPublished: true } });
       const bank = getQuestionBank(title, category);
       const questionRows = Array.from({ length: 30 }, (_, index) => {
         const item = bank[index % bank.length];
@@ -161,12 +157,11 @@ async function main() {
       const texts = questionRows.map((question) => question.text);
       const optionSets = questionRows.map((question) => JSON.stringify([...question.options].sort()));
       if (new Set(texts).size !== questionRows.length || new Set(optionSets).size !== questionRows.length) throw new Error(`Duplicate question content generated for ${title}`);
-      await prisma.question.createMany({ data: questionRows });
-      await prisma.youTubeVideo.upsert({ where: { videoId: `skd${category.slice(0, 2).toLowerCase()}${String(index).padStart(6, "0")}` }, update: { courseId: course.id, title: `${title} course briefing`, durationSeconds: 600, isPublished: true }, create: { courseId: course.id, videoId: `skd${category.slice(0, 2).toLowerCase()}${String(index).padStart(6, "0")}`, title: `${title} course briefing`, durationSeconds: 600, isPublished: true } });
+      const existingQuestionCount = await prisma.question.count({ where: { examId: exam.id } });
+      if (existingQuestionCount === 0) await prisma.question.createMany({ data: questionRows });
     }
   }
-  await prisma.course.updateMany({ data: { price: coursePricePkr } });
-  console.log(`Seeded ${total} courses with ${total * 30} unique course-matched questions.`);
+  console.log(`Ensured ${total} published seed courses and assessment question banks without deleting existing records or overwriting course content.`);
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; }).finally(() => prisma.$disconnect());

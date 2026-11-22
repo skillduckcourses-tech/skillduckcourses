@@ -48,7 +48,7 @@ export default function AdminStudentsClient() {
     <main className="admin-shell">
       <p className="eyebrow">STUDENT TRACKING</p>
       <h1>Certified learners.</h1>
-      <p className="admin-copy">Every learner with 100% completion and a passing exam is listed here with their verification link and completion time.</p>
+      <p className="admin-copy">Every learner with 100% completion and a passing exam is listed here with their verification link and completion time. Review pending and completed payment submissions under Payments &amp; approvals.</p>
       {error && <p className="login-error">{error}</p>}
       <section className="admin-ticket-list">
         {students.length === 0 ? (

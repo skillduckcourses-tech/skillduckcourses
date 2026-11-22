@@ -5,6 +5,7 @@ import { COURSE_PRICE_PKR } from "@/src/lib/pricing";
 
 const categories = [["MICROSOFT", "Computer Science / Microsoft"], ["AMAZON_ECOMMERCE", "Amazon E-Commerce"], ["AI_ML", "AI & Machine Learning"], ["DIGITAL_MARKETING_SHOPIFY", "Digital Marketing & Shopify"], ["MEDICAL_HEALTH", "Medical & Healthcare"], ["GYM_FITNESS", "Gym & Fitness"]] as const;
 type QuestionDraft = { text: string; options: [string, string, string, string]; correctIndex: number; explanation: string };
+type PublishedCourse = { id: number; title: string; slug: string; category: string };
 const emptyQuestion = (): QuestionDraft => ({ text: "", options: ["", "", "", ""], correctIndex: 0, explanation: "" });
 
 async function readJsonResponse<T>(response: Response): Promise<T> {
@@ -23,18 +24,28 @@ export default function NewCourseForm({ defaultMode = "existing" }: { defaultMod
   const [questions, setQuestions] = useState<QuestionDraft[]>(Array.from({ length: 10 }, emptyQuestion));
   const [courseId, setCourseId] = useState("");
   const [courseQuery, setCourseQuery] = useState("");
-  const [courses, setCourses] = useState<{ id: number; title: string; slug: string; category: string }[]>([]);
+  const [courses, setCourses] = useState<PublishedCourse[]>([]);
+  const [courseLoading, setCourseLoading] = useState(true);
+  const [courseLoadError, setCourseLoadError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    void fetch("/api/admin/courses")
+    let active = true;
+    void fetch("/api/admin/courses", { cache: "no-store" })
       .then(async (response) => {
-        const body = await readJsonResponse<{ courses?: typeof courses }>(response);
-        if (!response.ok) throw new Error(body?.courses ? "Unable to load courses." : "The course list could not be loaded.");
-        setCourses(body.courses || []);
+        const body = await readJsonResponse<{ courses?: PublishedCourse[]; error?: string }>(response);
+        if (!response.ok) throw new Error(body.error || "The course list could not be loaded.");
+        if (!Array.isArray(body.courses)) throw new Error("The course catalog returned an invalid response.");
+        if (active) setCourses(body.courses);
       })
-      .catch(() => setCourses([]));
+      .catch((loadError: unknown) => {
+        if (active) setCourseLoadError(loadError instanceof Error ? loadError.message : "The course list could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setCourseLoading(false);
+      });
+    return () => { active = false; };
   }, []);
 
   const visibleCourses = useMemo(
@@ -90,6 +101,24 @@ export default function NewCourseForm({ defaultMode = "existing" }: { defaultMod
         </button>
       </div>
 
+      <details className="admin-course-catalog" open>
+        <summary>
+          <span>Published course catalog</span>
+          <strong>{courseLoading ? "Loading..." : courseLoadError ? "Unavailable" : `${courses.length} courses`}</strong>
+        </summary>
+        {courseLoadError ? (
+          <p className="login-error" role="alert">{courseLoadError}</p>
+        ) : courseLoading ? (
+          <p>Loading published courses...</p>
+        ) : courses.length === 0 ? (
+          <p>No published courses were found in this database. Create a course here or seed the intended database.</p>
+        ) : (
+          <ul>
+            {courses.map((course) => <li key={course.id}>{course.title}<small>{course.category} / {course.slug}</small></li>)}
+          </ul>
+        )}
+      </details>
+
       {mode === "existing" ? (
         <label>
           Search published courses
@@ -102,7 +131,7 @@ export default function NewCourseForm({ defaultMode = "existing" }: { defaultMod
             placeholder="Search by course title or slug"
             required
           />
-          {courseQuery && !courseId && (
+          {courseQuery && !courseId && !courseLoading && !courseLoadError && (
             <span className="course-autocomplete admin-course-picker">
               {visibleCourses.map((course) => (
                 <button

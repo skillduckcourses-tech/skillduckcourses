@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Payment = {
   id: number;
@@ -32,20 +32,48 @@ function displayMethod(method: string) {
   return labels[method] || method.replaceAll("_", " ");
 }
 
+async function readJsonResponse<T>(response: Response): Promise<T> {
+  const text = await response.text();
+  if (!text.trim()) return {} as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error("The server returned an invalid response. Please retry.");
+  }
+}
+
 export default function AdminPaymentsClient() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const loadSequenceRef = useRef(0);
 
   async function load() {
-    const response = await fetch("/api/admin/payments");
-    if (!response.ok) {
-      setError("Unable to load payment submissions.");
-      return;
+    const sequence = ++loadSequenceRef.current;
+    try {
+      const response = await fetch("/api/admin/payments", { cache: "no-store" });
+      const body = await readJsonResponse<{ payments?: Payment[]; pendingCount?: number; error?: string }>(response);
+      if (response.status === 401) {
+        const next = `${window.location.pathname}${window.location.search}`;
+        window.location.replace(`/?next=${encodeURIComponent(next)}`);
+        return;
+      }
+      if (!response.ok) throw new Error(body.error || "Unable to load payment submissions.");
+      if (!Array.isArray(body.payments) || typeof body.pendingCount !== "number") {
+        throw new Error("The payment service returned an invalid response.");
+      }
+      if (sequence !== loadSequenceRef.current) return;
+      setPayments(body.payments);
+      setPendingCount(body.pendingCount);
+      setError("");
+    } catch (loadError) {
+      if (sequence === loadSequenceRef.current) {
+        setError(loadError instanceof Error ? loadError.message : "Unable to load payment submissions.");
+      }
+    } finally {
+      if (sequence === loadSequenceRef.current) setLoading(false);
     }
-    const body = await response.json() as { payments?: Payment[]; pendingCount?: number };
-    setPayments(body.payments || []);
-    setPendingCount(body.pendingCount || 0);
   }
 
   useEffect(() => {
@@ -54,6 +82,7 @@ export default function AdminPaymentsClient() {
     return () => {
       window.clearTimeout(initial);
       window.clearInterval(refresh);
+      loadSequenceRef.current += 1;
     };
   }, []);
 
@@ -69,7 +98,12 @@ export default function AdminPaymentsClient() {
           reviewNote: status === "APPROVED" ? "Payment verified and approved by admin" : "Payment proof rejected after verification",
         }),
       });
-      const body = await response.json() as { error?: string };
+      const body = await readJsonResponse<{ error?: string }>(response);
+      if (response.status === 401) {
+        const next = `${window.location.pathname}${window.location.search}`;
+        window.location.replace(`/?next=${encodeURIComponent(next)}`);
+        return;
+      }
       if (!response.ok) throw new Error(body.error || "Unable to update this payment.");
       await load();
     } catch (reviewError) {
@@ -83,7 +117,7 @@ export default function AdminPaymentsClient() {
       <h1>Certificate approval queue.</h1>
       <p className="admin-copy">Verify each receipt. Approval unlocks the course immediately; if the student has already passed, the certificate is issued at the same time.</p>
       <p className="course-status-badge" role="status">{pendingCount} payment{pendingCount === 1 ? "" : "s"} awaiting verification</p>
-      {error && <p className="login-error">{error}</p>}
+      {error && <p className="login-error" role="alert">{error}</p>}
       <section className="admin-ticket-list">
         <div className="admin-table-scroll">
           <table className="admin-data-table">
@@ -91,7 +125,7 @@ export default function AdminPaymentsClient() {
               <tr><th>Student</th><th>Course</th><th>Method</th><th>Transaction ID (TID)</th><th>Amount</th><th>Receipt</th><th>Assessment</th><th>Status</th><th>Actions</th></tr>
             </thead>
             <tbody>
-              {payments.length === 0 ? <tr><td className="admin-table-empty" colSpan={9}>No payment submissions yet.</td></tr> : payments.map((payment) => (
+              {payments.length === 0 ? <tr><td className="admin-table-empty" colSpan={9}>{loading ? "Loading payment submissions..." : error ? "Payment submissions could not be loaded." : "No payment submissions yet."}</td></tr> : payments.map((payment) => (
                 <tr key={payment.id}>
                   <td><strong>{payment.user.name || "Student"}</strong><small>{payment.user.email}</small></td>
                   <td>{payment.course.title}</td>

@@ -1,7 +1,7 @@
 import { readFile } from "fs/promises";
 import path from "path";
 import { NextResponse } from "next/server";
-import { prisma } from "@/src/lib/prisma";
+import { prisma, prismaErrorDiagnostics } from "@/src/lib/prisma";
 import { requireAdmin } from "@/src/lib/server-session";
 
 const contentTypes: Record<string, string> = {
@@ -30,7 +30,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
         "X-Content-Type-Options": "nosniff",
       },
     });
-  } catch {
-    return NextResponse.json({ error: "Payment proof file is unavailable." }, { status: 404 });
+  } catch (error) {
+    const diagnostics = prismaErrorDiagnostics(error);
+    if (diagnostics.prismaCode === "ENOENT") {
+      return NextResponse.json({ error: "Payment proof file was not found." }, { status: 404 });
+    }
+    console.error("Payment proof storage read failed.", diagnostics);
+    return NextResponse.json({ error: "Payment proof storage is unavailable.", code: "PAYMENT_PROOF_STORAGE_UNAVAILABLE" }, { status: 503 });
   }
 }

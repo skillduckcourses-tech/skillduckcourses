@@ -7,5 +7,5 @@ export const metadata = pageMetadata("Create a Course", "Create a SkillDuck cour
 
 export default async function NewCoursePage() {
   if (!await requireAdmin()) redirect("/");
-  return <main className="admin-shell"><p className="eyebrow">ADMIN COURSE STUDIO</p><h1>Create a course.</h1><p className="admin-copy">Publish a pathway and attach its first learning resource in one step.</p><NewCourseForm /></main>;
+  return <main className="admin-shell"><p className="eyebrow">ADMIN COURSE STUDIO</p><h1>Create a course.</h1><p className="admin-copy">Publish a pathway and attach its first learning resource in one step.</p><NewCourseForm defaultMode="new" /></main>;
 }
