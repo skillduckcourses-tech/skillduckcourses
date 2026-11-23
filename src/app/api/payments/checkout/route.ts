@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
+import { Prisma } from "@prisma/client";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE, verifySession } from "@/src/lib/auth";
@@ -14,6 +15,56 @@ type CheckoutPayload = { courseSlug?: unknown; method?: unknown; reference?: unk
 
 class ReceiptValidationError extends Error {}
 class ReceiptStorageUnavailableError extends Error {}
+
+async function createPaymentSubmission(input: {
+  userId: number;
+  courseId: number;
+  passedExam: { id: number; examId: number } | null;
+  amount: number;
+  currency: string;
+  method: (typeof paymentOptions)[PaymentOptionKey]["method"];
+  reference: string;
+  proofUrl?: string;
+  provider: string;
+}) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await prisma.$transaction(async (transaction) => {
+        const existingPayment = await transaction.payment.findFirst({
+          where: { userId: input.userId, courseId: input.courseId, status: { in: ["PENDING", "COMPLETED"] } },
+          orderBy: { createdAt: "desc" },
+          select: { id: true, status: true },
+        });
+        if (existingPayment) return { payment: existingPayment, alreadySubmitted: true };
+
+        const payment = await transaction.payment.create({
+          data: {
+            userId: input.userId,
+            courseId: input.courseId,
+            amount: input.amount,
+            currency: input.currency,
+            method: input.method,
+            reference: input.reference,
+            proofUrl: input.proofUrl,
+            provider: input.provider,
+          },
+        });
+        if (input.passedExam) {
+          await createCertificateRequest(transaction, {
+            userId: input.userId,
+            examId: input.passedExam.examId,
+            courseId: input.courseId,
+            sessionId: input.passedExam.id,
+          });
+        }
+        return { payment, alreadySubmitted: false };
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error) {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2034" || attempt === 2) throw error;
+    }
+  }
+  throw new Error("Unable to serialize payment submission.");
+}
 
 async function readPayload(request: Request): Promise<CheckoutPayload> {
   if (request.headers.get("content-type")?.includes("multipart/form-data")) {
@@ -87,7 +138,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, paymentId: existingPayment.id, status: "PENDING", certificateStatus: "PENDING_APPROVAL", alreadySubmitted: true });
     }
     if (existingPayment?.status === "COMPLETED") {
-      return NextResponse.json({ ok: true, paymentId: existingPayment.id, status: "COMPLETED", certificateStatus: "APPROVED", alreadySubmitted: true });
+      return NextResponse.json({ ok: true, paymentId: existingPayment.id, status: "COMPLETED", certificateStatus: passedExam ? "APPROVED" : null, alreadySubmitted: true });
     }
 
     let proofUrl: string | undefined;
@@ -109,26 +160,28 @@ export async function POST(request: Request) {
       }
     }
 
-    const payment = await prisma.$transaction(async (transaction) => {
-      const createdPayment = await transaction.payment.create({
-        data: {
-          userId: user.id,
-          courseId: course.id,
-          amount: option.amount,
-          currency: option.currency,
-          method: option.method,
-          reference,
-          proofUrl,
-          provider: option.label,
-        },
-      });
-      if (passedExam) {
-        await createCertificateRequest(transaction, { userId: user.id, examId: passedExam.examId, courseId: course.id, sessionId: passedExam.id });
-      }
-      return createdPayment;
+    const submission = await createPaymentSubmission({
+      userId: user.id,
+      courseId: course.id,
+      passedExam,
+      amount: option.amount,
+      currency: option.currency,
+      method: option.method,
+      reference,
+      proofUrl,
+      provider: option.label,
     });
 
-    return NextResponse.json({ ok: true, paymentId: payment.id, status: payment.status, certificateStatus: "PENDING_APPROVAL", instructions: { label: option.label, amount: option.amount, currency: option.currency } }, { status: 201 });
+    if (submission.alreadySubmitted) {
+      return NextResponse.json({
+        ok: true,
+        paymentId: submission.payment.id,
+        status: submission.payment.status,
+        certificateStatus: submission.payment.status === "PENDING" ? "PENDING_APPROVAL" : passedExam ? "APPROVED" : null,
+        alreadySubmitted: true,
+      });
+    }
+    return NextResponse.json({ ok: true, paymentId: submission.payment.id, status: submission.payment.status, certificateStatus: "PENDING_APPROVAL", instructions: { label: option.label, amount: option.amount, currency: option.currency } }, { status: 201 });
   } catch (error) {
     const diagnostics = prismaErrorDiagnostics(error);
     console.error("Certificate payment submission failed.", diagnostics);

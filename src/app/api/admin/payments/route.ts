@@ -6,17 +6,35 @@ export async function GET() {
   try {
     if (!await requireAdmin()) return NextResponse.json({ error: "Admin access required." }, { status: 403 });
     const payments = await prisma.payment.findMany({ include: { user: { select: { name: true, email: true } }, course: { select: { title: true, slug: true } } }, orderBy: [{ status: "asc" }, { createdAt: "desc" }] });
-    const enrichedPayments = await Promise.all(payments.map(async (payment) => {
-      const latestPassedSession = await prisma.examSession.findFirst({
-        where: { userId: payment.userId, exam: { courseId: payment.courseId }, status: "PASSED", completedAt: { not: null } },
-        orderBy: { completedAt: "desc" },
-        include: { exam: { select: { title: true } } },
-      });
-      const latestCertificate = await prisma.certificate.findFirst({
-        where: { userId: payment.userId, courseId: payment.courseId },
-        orderBy: { issuedAt: "desc" },
-        select: { status: true, certificateNo: true, verificationHash: true },
-      });
+    const userIds = [...new Set(payments.map((payment) => payment.userId))];
+    const courseIds = [...new Set(payments.map((payment) => payment.courseId))];
+    const [passedSessions, certificates] = await Promise.all([
+      prisma.examSession.findMany({
+        where: { userId: { in: userIds }, exam: { courseId: { in: courseIds } }, status: "PASSED", completedAt: { not: null } },
+        orderBy: [{ completedAt: "desc" }, { id: "desc" }],
+        select: { userId: true, score: true, exam: { select: { courseId: true, title: true } } },
+      }),
+      prisma.certificate.findMany({
+        where: { userId: { in: userIds }, courseId: { in: courseIds } },
+        orderBy: [{ issuedAt: "desc" }, { id: "desc" }],
+        select: { userId: true, courseId: true, status: true, certificateNo: true, verificationHash: true },
+      }),
+    ]);
+    const keyFor = (userId: number, courseId: number) => `${userId}:${courseId}`;
+    const latestPassedByCourse = new Map<string, (typeof passedSessions)[number]>();
+    for (const session of passedSessions) {
+      const key = keyFor(session.userId, session.exam.courseId);
+      if (!latestPassedByCourse.has(key)) latestPassedByCourse.set(key, session);
+    }
+    const latestCertificateByCourse = new Map<string, (typeof certificates)[number]>();
+    for (const certificate of certificates) {
+      const key = keyFor(certificate.userId, certificate.courseId);
+      if (!latestCertificateByCourse.has(key)) latestCertificateByCourse.set(key, certificate);
+    }
+    const enrichedPayments = payments.map((payment) => {
+      const key = keyFor(payment.userId, payment.courseId);
+      const latestPassedSession = latestPassedByCourse.get(key);
+      const latestCertificate = latestCertificateByCourse.get(key);
       return {
         ...payment,
         examScore: latestPassedSession?.score ?? null,
@@ -25,7 +43,7 @@ export async function GET() {
         certificateNo: latestCertificate?.certificateNo ?? null,
         verificationHash: latestCertificate?.verificationHash ?? null,
       };
-    }));
+    });
     return NextResponse.json({
       payments: enrichedPayments,
       pendingCount: payments.filter((payment) => payment.status === "PENDING").length,

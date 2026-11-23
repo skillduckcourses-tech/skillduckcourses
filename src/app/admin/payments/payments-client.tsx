@@ -78,7 +78,7 @@ export default function AdminPaymentsClient() {
 
   useEffect(() => {
     const initial = window.setTimeout(() => void load(), 0);
-    const refresh = window.setInterval(() => void load(), 15000);
+    const refresh = window.setInterval(() => void load(), 5000);
     return () => {
       window.clearTimeout(initial);
       window.clearInterval(refresh);

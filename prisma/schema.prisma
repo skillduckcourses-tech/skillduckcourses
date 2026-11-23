@@ -33,6 +33,7 @@ model Enrollment {
   courseSlug String
   enrolledAt DateTime @default(now())
   user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course     Course  @relation(fields: [courseSlug], references: [slug], onDelete: Cascade)
 
   @@unique([userId, courseSlug])
   @@index([userId])
@@ -53,6 +54,7 @@ model Course {
   exams          Exam[]
   videos         YouTubeVideo[]
   payments       Payment[]
+  enrollments    Enrollment[]
   legacySupportTickets LegacySupportTicket[]
   resources      Resource[]
   lessons        Lesson[]

@@ -28,7 +28,11 @@ export async function proxy(request: NextRequest) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "Authentication required.", code: "UNAUTHENTICATED" }, { status: 401, headers: { "Cache-Control": "no-store" } });
     }
-    return NextResponse.redirect(new URL("/", request.url));
+    const loginUrl = request.nextUrl.clone();
+    loginUrl.pathname = "/";
+    loginUrl.search = "";
+    loginUrl.searchParams.set("next", `${pathname}${request.nextUrl.search}`);
+    return NextResponse.redirect(loginUrl);
   }
   if (request.nextUrl.pathname.startsWith("/exam") && !request.cookies.get("skillduck_exam_access")) {
     return NextResponse.redirect(new URL("/dashboard?error=watch_required", request.url));
